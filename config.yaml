@@ -1,0 +1,188 @@
+# =====================================================================
+# KORE-X · Configuración única del sistema
+# Toda constante ajustable vive aquí (semillas, rutas, umbrales, rangos
+# clínicos, escenarios y espacio de búsqueda). No repetir en el código.
+# =====================================================================
+
+project:
+  name: KORE-X
+  version: "1.0.0"
+  seed: 42
+  n_jobs: 1                       # hilos por modelo (1 = evita sobrecarga con datos pequeños)
+  parallel_workers: -1            # pliegues en paralelo (-1 = un proceso por núcleo físico)
+
+kdigo:
+  guideline: "KDIGO 2024 Clinical Practice Guideline for CKD"
+  equation: "CKD-EPI 2021 creatinina, sin coeficiente racial (Inker et al., 2021)"
+  # Estadios G por TFGe (mL/min/1,73 m²): G1 ≥90 · G2 60–89 · G3 30–59 · G4 15–29 · G5 <15
+  g_cuts: [90, 60, 30, 15]
+  classes: [0, 1, 2, 3, 4]
+  stage_labels: ["G1", "G2", "G3", "G4", "G5"]
+  class_names: ["G1 · Normal o alto", "G2 · Levemente disminuido", "G3 · Moderadamente disminuido",
+                "G4 · Severamente disminuido", "G5 · Falla renal"]
+  class_colors: ["#2E7D32", "#9CCC65", "#F9A825", "#EF6C00", "#6A1B9A"]   # verde → morado
+  # El dataset UCI no registra el sexo: TFGe como hombre y como mujer y se asigna el estadio peor
+  sex_policy: worst        # worst | male | female (análisis de sensibilidad)
+
+paths:
+  raw_data: data/raw/chronic_kidney_disease_full.arff
+  data: data/ckd_uci.xlsx
+  synthetic_data: data/ckd_synthetic.xlsx
+  artifacts: artifacts
+  audit_log: artifacts/auditoria.jsonl   # registro de predicciones (hash encadenado)
+
+data:
+  sep: ","
+  encoding: utf-8-sig
+  na_values: ["?", ""]
+  na_sentinel: 5.39761e-79       # centinela NHANES (por si se usa otro dataset)
+  questionnaire_regex: "^[A-Z]{2,4}Q\\d"
+  questionnaire_missing_codes: [7, 9, 77, 99, 777, 999, 7777, 9999]
+  min_age: 18                    # CKD-EPI válido en adultos
+  max_missing_fraction: 0.6      # descarta columnas con más faltantes
+  id_columns: [id, SEQN, patient_id]
+  # Nombre canónico -> alias posibles en el archivo (se toma el primero que exista)
+  aliases:
+    creatinine: [sc, LBXSCR, creatinine, serum_creatinine, creatinina]
+    creatinine_umol: [LBDSCRSI, creatinine_umol]
+    age: [age, RIDAGEYR, edad]
+    sex: [sex, RIAGENDR, sexo, gender]
+  female_values: [2, "2", "F", "f", "female", "Female", "mujer", "Mujer"]
+  # Columnas derivadas del target o diagnósticas: NUNCA entran como predictores
+  leakage_columns: [class, classification, ckd, egfr_computed, ckd_present, ckd_stage, egfr, gfr,
+                    stage, g_stage, target, label]
+  # Componentes directos del etiquetado (excluidos en el escenario B además de V_def)
+  definitional_extra: [creatinine_umol]
+  nominal: []
+  ordinal: [sg, al, su]          # densidad urinaria y tiras reactivas (escala ordenada)
+
+scenarios:
+  default: A
+  A:
+    name: "Modelo KORE-X (todas las variables)"
+    description: "Usa todos los datos clínicos del paciente, incluida la creatinina. La TFGe no entra como predictor."
+  B:                              # se entrena siempre; --circularidad le da su propia validación anidada
+    name: "Tamizaje sin creatinina"
+    description: "Excluye creatinina y TFGe. Estima la probabilidad de TFGe < 60 y < 30 para decidir a quién pedir creatinina; también cuantifica la circularidad (IC_M)."
+
+preprocessing:                    # C2
+  missforest: {n_estimators: 50, max_depth: 12, max_iter: 6, transform_iter: 2}
+  skew_threshold: 1.0
+
+grouping:                         # C3
+  distance_cut: 0.3               # δ = 1 − |ρ| → |ρ| > 0,7
+  always_keep: [creatinine, age]  # siempre disponibles para los modelos lineales (núcleo de la función renal)
+
+resampling:                       # C4 · OA-SMOTE-NC (valores por defecto)
+  r: 1.0                         # balancea cada estadio hasta igualar al mayor
+  m: 10
+  k_s: 5
+  beta: 0.5
+  max_attempts_factor: 10
+
+cost:                             # matriz C_kj = |k−j|^p (1 + δ·1[j<k])
+  p: 1                            # p = 1: la decisión elige la mediana predictiva
+  delta: 0.0                      # fijado por el panel clínico
+  delta_sensitivity: [0.5, 1.0]
+
+ensemble:                         # C5
+  stack_folds: 5
+  q_threshold: 0.9
+  greedy_selection: true          # además de la poda por Q de Yule, retira modelos que no mejoran J
+  meta_alpha: 0.01
+  calibration: temperature        # temperature | none
+  svm_max_samples: 4000           # submuestreo estratificado para la SVM
+
+tuning:                           # C6
+  tune_stack_folds: 3             # pliegues del stacking durante la búsqueda (el modelo evaluado usa stack_folds)
+  objective_lambda: 0.0           # J = F1macro − λ · costo_medio/costo_máx (0 = F1 macro puro)
+  profiles:
+    full:     {outer_folds: 5, outer_repeats: 5, inner_folds: 3, n_trials: 30, stack_folds: 5, final_trials: 40}
+    standard: {outer_folds: 5, outer_repeats: 1, inner_folds: 3, n_trials: 8, stack_folds: 5, final_trials: 15}
+    quick:    {outer_folds: 3, outer_repeats: 1, inner_folds: 2, n_trials: 2, stack_folds: 3, final_trials: 2}
+  # Espacio Θ: [mín, máx, tipo] con tipo ∈ {int, float, log}
+  # Acotado para n ≈ 350: árboles más grandes no mejoran la precisión y multiplican el tiempo
+  search_space:
+    xgb:  {n_estimators: [100, 300, int], max_depth: [2, 6, int], learning_rate: [0.01, 0.3, log],
+           subsample: [0.6, 1.0, float], colsample_bytree: [0.5, 1.0, float], reg_lambda: [0.01, 10, log]}
+    lgbm: {n_estimators: [100, 300, int], num_leaves: [8, 32, int], learning_rate: [0.01, 0.3, log],
+           min_child_samples: [5, 50, int], reg_lambda: [0.01, 10, log]}
+    cat:  {iterations: [100, 300, int], depth: [3, 6, int], learning_rate: [0.01, 0.3, log],
+           l2_leaf_reg: [1, 10, log]}
+    et:   {n_estimators: [100, 300, int], max_depth: [3, 20, int], min_samples_leaf: [1, 10, int],
+           max_features: [0.3, 1.0, float]}
+    lr:   {C: [0.1, 1000, log]}
+    lr_core: {C: [1, 10000, log]}
+    svm:  {C: [0.1, 1000, log], gamma: [0.001, 1, log]}
+    resampling: {beta: [0.0, 1.0, float], m: [5, 15, int], k_s: [3, 10, int]}
+    meta: {meta_alpha: [0.001, 10, log]}
+  defaults:
+    xgb:  {n_estimators: 300, max_depth: 4, learning_rate: 0.05, subsample: 0.9, colsample_bytree: 0.8, reg_lambda: 1.0}
+    lgbm: {n_estimators: 300, num_leaves: 31, learning_rate: 0.05, min_child_samples: 20, reg_lambda: 1.0}
+    cat:  {iterations: 200, depth: 5, learning_rate: 0.05, l2_leaf_reg: 3.0}
+    et:   {n_estimators: 300, max_depth: 12, min_samples_leaf: 2, max_features: 0.7}
+    lr:   {C: 100.0}
+    lr_core: {C: 1000.0}
+    svm:  {C: 100.0, gamma: 0.01}
+  quick_caps: {n_estimators: 80, iterations: 80}   # perfil quick: limita árboles
+
+explain:                          # C8
+  background_size: 60
+  global_samples: 150             # pacientes para SHAP global (barras, beeswarm, dependencia)
+  shap_max_evals: 600
+  lime_num_samples: 2000
+  lime_discretize: false          # LIME continuo: converge mejor con SHAP
+  top_k: 5
+  convergence_per_class: 4        # instancias por clase para ICSL
+
+# Paciente sano de referencia (botón "Paciente base" del dashboard)
+base_patient: {age: 40, sex: 1, creatinine: 0.8, bp: 80, sg: 1.020, al: 0, su: 0, rbc: normal, pc: normal,
+               pcc: notpresent, ba: notpresent, bgr: 100, bu: 25, sod: 140, pot: 4.3, hemo: 14.5, pcv: 44,
+               wbcc: 7500, rbcc: 5.0, htn: "no", dm: "no", cad: "no", appet: good, pe: "no", ane: "no"}
+random_quantiles: [0.025, 0.975]  # "Aleatorizar": cada variable al azar en el 95 % central del dataset
+
+# Variables (UCI CKD): etiqueta en lenguaje cotidiano, unidad y rango clínico plausible
+variables:
+  age:   {label: "Edad", unit: "años", min: 18, max: 100}
+  sex:   {label: "Sexo (1 = mujer)", unit: "", min: 0, max: 1}
+  creatinine: {label: "Creatinina en sangre", unit: "mg/dL", min: 0.2, max: 25}
+  egfr_ckdepi2021: {label: "Filtrado glomerular estimado (TFGe)", unit: "mL/min/1,73 m²", min: 1, max: 200}
+  bp:    {label: "Presión arterial diastólica", unit: "mmHg", min: 40, max: 180}
+  sg:    {label: "Densidad urinaria", unit: "", min: 1.000, max: 1.040}
+  al:    {label: "Albúmina en tira reactiva (0–5)", unit: "", min: 0, max: 5}
+  su:    {label: "Azúcar en orina (0–5)", unit: "", min: 0, max: 5}
+  rbc:   {label: "Glóbulos rojos en orina", unit: ""}
+  pc:    {label: "Células de pus en orina", unit: ""}
+  pcc:   {label: "Grumos de células de pus", unit: ""}
+  ba:    {label: "Bacterias en orina", unit: ""}
+  bgr:   {label: "Glucosa en sangre (aleatoria)", unit: "mg/dL", min: 20, max: 700}
+  bu:    {label: "Urea en sangre", unit: "mg/dL", min: 1, max: 400}
+  sod:   {label: "Sodio", unit: "mEq/L", min: 100, max: 180}
+  pot:   {label: "Potasio", unit: "mEq/L", min: 1.5, max: 10}
+  hemo:  {label: "Hemoglobina", unit: "g/dL", min: 3, max: 20}
+  pcv:   {label: "Hematocrito (volumen celular)", unit: "%", min: 9, max: 60}
+  wbcc:  {label: "Leucocitos en sangre", unit: "células/µL", min: 1500, max: 30000}
+  rbcc:  {label: "Glóbulos rojos en sangre", unit: "millones/µL", min: 1.5, max: 8.5}
+  htn:   {label: "Hipertensión", unit: ""}
+  dm:    {label: "Diabetes", unit: ""}
+  cad:   {label: "Enfermedad coronaria", unit: ""}
+  appet: {label: "Apetito", unit: ""}
+  pe:    {label: "Edema en pies", unit: ""}
+  ane:   {label: "Anemia", unit: ""}
+
+# Variables categóricas: valores posibles en el archivo (formularios del dashboard)
+categorical_values:
+  rbc: [normal, abnormal]
+  pc: [normal, abnormal]
+  pcc: [notpresent, present]
+  ba: [notpresent, present]
+  htn: ["no", "yes"]
+  dm: ["no", "yes"]
+  cad: ["no", "yes"]
+  appet: [good, poor]
+  pe: ["no", "yes"]
+  ane: ["no", "yes"]
+
+# Traducción de los valores del dataset para la interfaz (el modelo usa los originales)
+value_labels: {normal: "Normal", abnormal: "Anormal", notpresent: "Ausente", present: "Presente",
+               "no": "No", "yes": "Sí", good: "Bueno", poor: "Malo"}

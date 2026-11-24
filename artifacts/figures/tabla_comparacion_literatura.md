@@ -1,0 +1,15 @@
+| Estudio | Datos | Tarea | TFGe como entrada | Modelo | Resultado reportado | Variable dominante (XAI) |
+|---|---|---|---|---|---|---|
+| KORE-X (con creatinina) | UCI, n = 356 adultos | Estadio G1–G5 | No | Stacking ordinal + validación anidada | Exactitud 0.975 · F1 macro 0.974 · AUC 0.999 | Creatinina en sangre 89 %, Edad 9 %, Hipertensión 0 % |
+| KORE-X (sin creatinina) | UCI, n = 356 adultos | Tamizaje TFGe < 60 sin creatinina | No | Stacking ordinal + validación anidada | AUC (<60) 0.930 · Sensibilidad (<60) 0.853 · ±1 estadio 0.947 | Urea en sangre 28 %, Albúmina en tira reactiva (0–5) 15 %, Edad 9 % |
+| #1 Hegde et al., 2025 | Hospital de Bangalore (aumentado a 5000) | Estadio G1–G5 | Sí | CNN + selección XAI | Exactitud 99,5 % | TFGe (SHAP 1,16 frente a 0,02 de la siguiente) |
+| #20 Akter et al., 2023 (CKD.Net) | Corea, ~1 millón de registros | Estadio I–V | Sí | SimpleRNN + MLP | Exactitud 99,2–99,8 % | TFGe y creatinina |
+| #4 Huang et al., 2025 | Shanghái, 1150 pacientes | Riesgo en 4 niveles | Sí (y el estadio) | XGBoost + Optuna | F1 91,9 % · AUC 97,7 % | Estadio, ACR, TFGe |
+| #17 Huang et al., 2025 | Shanghái, 1150 pacientes | Riesgo en 4 niveles | Sí (y el estadio) | XGBoost + bandits | F1 91,0 % · AUC 97,8 % | ACR, TFGe, estadio |
+| #6 Debal y Sitote, 2022 | Etiopía, 1718 registros | 5 clases | No informado | XGBoost | Exactitud 82,6 % | Creatinina, urea, hemoglobina, densidad urinaria |
+| #5 Ilyas et al., 2021 | UCI, estadio por CKD-EPI | Estadios | No | Árbol J48 | Exactitud 85,5 % | Sin XAI |
+| #14 Chouit et al., 2026 | UCI (n = 400) | Binaria (ERC sí/no) | No | XGBoost + SMOTE | Exactitud 94,6 % · AUC 0,948 | Densidad urinaria, hemoglobina, creatinina |
+| #7 Sci. Rep., 2026 (GWO) | UCI | Binaria (ERC sí/no) | No | Ensamble ponderado por GWO | Exactitud 98,75 % · AUC 0,994 | Albúmina, glóbulos rojos, diabetes, creatinina |
+| #2 Chhabra et al., 2024 | UCI | Binaria (ERC sí/no) | No | Stacking (SVM, RF, AdaBoost) | Exactitud 99,5 % | Sin XAI |
+| #3 Sci. Rep., 2026 (Buner) | Pakistán, n = 650 | Binaria, examen de orina | No | Ensamble ponderado | Exactitud 97,7 % | Sin XAI |
+| #19 Qureshi et al., 2026 | 380 pacientes, 20 variables | Binaria | No | KNN | Exactitud 94,7 % | Albúmina, células de pus, bacterias |

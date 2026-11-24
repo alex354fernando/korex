@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "Si utiliza este software, cítelo con los metadatos de este archivo."
+title: "KORE-X: estratificación KDIGO G1–G5 con ensamble ordinal y explicabilidad SHAP–LIME"
+version: 1.0.0
+license: MIT
+type: software
+authors:
+  # Completar antes de publicar (una entrada por autor):
+  - family-names: "APELLIDO"
+    given-names: "NOMBRE"
+keywords:
+  - chronic kidney disease
+  - KDIGO
+  - ensemble learning
+  - explainable AI
+  - SHAP
+  - LIME
